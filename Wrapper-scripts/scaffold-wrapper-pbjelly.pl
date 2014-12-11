@@ -20,9 +20,10 @@ my($blasr_opts, $NJOBS, $no_cores, $dataset_name,
 $NJOBS = 10;
 
 
-my $localmem = 8000;
-my $distmem = 2000;
-
+my $local_mem = 8000;
+my $dist_mem_head = 2000;
+my $dist_mem_node = 48000;
+my $DIST_CORES = 12;
 my $preexec = "~/Pacbio_tests/setPaths.sh";
 
 #BLASR_OPTIONS
@@ -36,7 +37,6 @@ my %blasr = (
 "nrpoc", 12
 );
 
-
 my $options_ok = GetOptions(\%blasr,
 'name=s'    => \$dataset_name,
 'noclean'   => \$no_clean,
@@ -44,14 +44,15 @@ my $options_ok = GetOptions(\%blasr,
 'jobs=i'    => \$NJOBS,
 'cores=i'   => \$no_cores,
 'debug'     => \$debug,
-
+'distmem=i' => \$dist_mem_node,
+'localmem=i' => \$local_mem,
 'reads|r=s'   => \@reads,
 'contigs|c=s' => \$contigs,
-'o=s'       => \$outfile
+'o=s'       => \$outdir
 
 );
 
-print join("\n",%blasr);
+#print join("\n",%blasr);
 
 if (!($options_ok)) {
 print STDERR "usage: $0 [options] -c <contigs.fa> -o <output dir> -r <reads.fq> [-r <reads.fq>]
@@ -67,14 +68,25 @@ exit(1);
 
 
 $contigs = File::Spec->rel2abs($contigs);
+#$reads = File::Spec->rel2abs($reads);
 
-print STDERR "ARGV: ".$#ARGV."\n";
-print STDERR "@ARGV";
-print STDERR "\n";
-print STDERR "SCRIPT: ".$0."\nSCRIPTDIR: ".dirname($0);
+print STDERR "SCRIPT: ".$0."\nSCRIPTDIR: ".dirname($0)."\n";
 
 my $READSDIR = dirname($reads[0]);
+$READSDIR = File::Spec->rel2abs($READSDIR);
 $reads[0] = basename($reads[0]);
+
+unless($dataset_name) {
+    $dataset_name = $reads[0];
+    $dataset_name =~ s/.fast[aq]$//gi;
+    $dataset_name =~ s/.fa$//gi;
+}
+if($outdir) {
+    $outdir = File::Spec->rel2abs($outdir);
+}
+else {
+    $outdir = File::Spec->rel2abs(".");
+}
 
 my $READS = "";
 foreach my $read (@reads) {
@@ -89,25 +101,30 @@ foreach my $read (@reads) {
 my $run_index = int(rand(100000));
 my $run_folder = File::Spec->rel2abs("tmp.pbjelly.".$run_index);
 
-#print STDERR $run_folder."\n";
+print STDERR "DEBUG: mkdir $run_folder \n";
 system("mkdir $run_folder"); # or die "could not make rundir";
 chdir($run_folder) or die "could not cd into $run_folder";
+my $LOGFILE = $run_folder."/logfile.txt";
+open(LOGFILE,">>$LOGFILE");
 
-print STDERR $run_folder."\n";
+print STDERR "DEBUG: mkdir $outdir/$dataset_name";
+system("mkdir $outdir/$dataset_name\n"); # or die "could not make rundir";
+system("ls $outdir");
+
 
 #######################
 #TEMPLATES
 #######################
 $contigs = "/lustre/scratch108/parasites/snr/refs/Pf3D7.version3.uniquely-tagged.contigs.fasta";
-$outdir = "/lustre/scratch108/parasites/snr/Pacbio_tests/out";
-$dataset_name = "dataset_name";
+#$outdir = "/lustre/scratch108/parasites/snr/Pacbio_tests/out";
+#$dataset_name = "dataset_name";
 
-my $bsub_script = "$FindBin::Bin/scaffold-wrapper_pbjelly/bsub_wlog.pl";
+my $bsub_script = "$FindBin::Bin/scaffold-wrapper-pbjelly/bsub_wlog.pl";
 print "BSUB_SCRIPT: ".$bsub_script."\n";
 # my $bsub_script =  File::Spec->rel2abs('./scaffold-wrapper_pbjelly/bsub_wlog.pl');
 
-my $LSF_SUBLINE = $bsub_script.' ${JOB_ID} -q normal -R \'select[mem>48000] rusage[mem=48000] span[ptile=12]\' -n12  -M48000 ${CMD}';
-my $LOCAL_SUBLINE='${CMD} 2> ${STDERR} 1> ${STDOUT} &amp';
+my $LSF_SUBLINE = $bsub_script.' '.$LOGFILE.' -q normal -R \"select[mem\>'.$dist_mem_node.'] rusage[mem='.$dist_mem_node.'] span[ptile='.$DIST_CORES.']\" -n'.$DIST_CORES.'  -M'.$dist_mem_node.' ${CMD}';
+my $LOCAL_SUBLINE='${CMD} 2> ${STDERR} 1> ${STDOUT} &amp;';
 
 my $BLASR_LINE = "";
 foreach my $key (keys(%blasr)) {
@@ -124,10 +141,8 @@ my $template = <<'END';
     </cluster>
     <blasr>$BLASR_LINE</blasr>
     <input baseDir="$READSDIR">
-      $READS
-    </input>
+    $READS</input>
 </jellyProtocol>
-
 END
 ;
 
@@ -169,15 +184,15 @@ sub _submitLocalJob {
     $dependency = "-w \"".$dependency."\"" if $dependency;
     #print $dependency."\n" if $dependency;
     $dependency = "" if !$dependency;
-    $preexec = "-E ".$preexec if $preexec;
+    my $preexec = "-E ".$preexec if $preexec;
 
   # bsub, write to log file...
     my $job_name = "pbj_".$dataset_name."_".$stage;
     #print $job_name."\n";
     my $command = <<"END";
  bsub -J $job_name -o $job_name.%J.out -e $job_name.%J.err \\
- -q $queue -R \'select[mem>2000] rusage[mem=2000] span[ptile=4]\' \\
- $dependency $preexec  -M2000 -n4  \\
+ -q $queue -R \'select[mem>$dist_mem_head] rusage[mem=$dist_mem_head] span[ptile=4]\' \\
+ $dependency $preexec  -M$dist_mem_head -n4  \\
  Jelly.py $stage $tempfile_sm
 END
 $command .= " -x $extras" if $extras;
@@ -200,7 +215,7 @@ sub _submitDistJob {
     $dependency = "-w \"".$dependency."\"" if $dependency;
     #print $dependency."\n" if $dependency;
     $dependency = "" if !$dependency;
-    $preexec = "-E ".$preexec if $preexec;
+    my $preexec = "-E ".$preexec if $preexec;
 
   # bsub, write to log file...
     my $job_name = "pbj_".$dataset_name."_".$stage;
@@ -228,28 +243,112 @@ $command .= " -x $extras" if $extras;
 
 sub _wait_done {
     my $bsub = `bjobs -noheader $LASTID`;
-    my @F = split($bsub);
-    while $F[2] ne "EXIT" && $F[2] ne "DONE" {
-	wait(60);
-	my $bsub = `bjobs -noheader $LASTID`;
+    print STDERR "BSUB: :".$bsub.":\n";
+    my $status = "";
+    if($bsub) {
 	my @F = split($bsub);
+	$status = $F[2];
     }
-    return $F[2];
+    my $waits = 0;
+    while ($status ne "EXIT" && $status ne "DONE") {
+	print STDERR "waiting... ".$status." ".$waits."\n";
+	$waits++;
+	sleep(30);
+	$bsub = `bjobs -noheader $LASTID`;
+	print "BSUB: ".$bsub;
+	if($bsub) {
+	    my @F = split(/\s+/,$bsub);
+	    $status = $F[2];
+	}
+	#if still waiting and nothing on job list - assume failed to submit
+	if ($waits > 2 && $status ne "PEND" 
+	    && $status ne "RUN" && $status ne "DONE") {
+	    print STDERR "job $LASTID not returning status [$status] - not submitted?\n";
+	    exit(1);
+	}
+	# check through log file for failed jobs;
+	# will fail if finds one with EXIT status
+	_get_all_jobs(); 
+	
+	
+    }
+    return $status;
 }
 
 sub _bsub {
-    our $LASTID;
+    #our $LASTID;
     my $command = shift;
-#    my $output = `$command`;
-    my $output = "thingy <123> submitted";
+    #print STDERR $command."\n";
+    my $output = `$command`;
+#    my $output = "thingy <123> submitted";
+    $command =~ s/\n/ /gi;
     if($output =~ m/\<(\d+)\>.*submitted*/gi) {
-	$LASTID =  $1;
-	print STDERR 'submitted: '.$command."\tjob_id: ".$LASTID."\n";
+	$LASTID = $1;
+	print LOGFILE $LASTID."\t".$LASTID."\t".$command."\n";
 	return $output;
     }
     else{
-	print STDERR "could not submit command\n".$command;
+	print LOGFILE "-1\t-1\tcould not submit command\n".$command;
 	$LASTID = "-1";}
+}
+
+sub _get_child_jobs {
+    my $parent_id = shift;
+    my @children;
+    open(READLOG,$LOGFILE);
+    while(<READLOG>) {
+	print $_;
+	my @F = split("\t",$_);
+	my ($parent, $child) = @F[0..1];
+	if ($parent == -1) {print STDERR "job not submitted, exiting\n";
+			    exit(1);
+	}
+	if ($parent == $parent_id) {
+	    push(@children, $child);
+	}
+    }
+    close(READLOG);
+    return \@children;
+}
+sub _get_all_jobs {
+    my @jobs;
+    open(READLOG,$LOGFILE);
+    while(<READLOG>) {
+	my @F = split("\t",$_);
+	my ($parent, $job) = @F[0..1];
+	if ($job == -1) {print STDERR "job not submitted, exiting\n";
+			 exit(1);}
+	my $status = _get_job_status($job);
+	if ($status eq "EXIT") {
+	    print STDERR "job ".$job." exited with status ".$status.", exiting\n";
+	    exit(1);}
+	
+	push(@jobs, $job);
+    }
+    close(READLOG);
+    return \@jobs;
+}
+
+
+
+sub _get_job_status {
+    my $job_id = shift;
+    my $bjob = `bjobs -noheader $job_id`;
+    my $status = "NULL";
+    if($bjob && $bjob ne "") {
+	my @F = split(/\s/,$bjob);
+	$status = $F[2];
+    }
+    return $status;
+}
+
+sub _make_depends_children {
+    my @depends = ();
+    foreach my $child (@_) {
+	my $depend = "done(".$child.")";
+	push(@depends,$depend);
+    }
+    return join(" && ",@depends);
 }
 
 # setup: make suffixarray...
@@ -258,21 +357,32 @@ _submitLocalJob("setup","normal");
 # MAPPING
 _submitDistJob("mapping","normal","done($LASTID)");
 #check mapping worked:
-#check exists 'm4' file
+
+my $children = _get_child_jobs($LASTID);
+foreach my $child (@{$children}) {
+    print $child."\t";
+    my $status =  _get_job_status($child);
+    print $status."\n";
+}
+$LASTDEPENDENCY = _make_depends_children(@{$children});
+print STDERR $LASTDEPENDENCY."\n";
+#check exists 'm4' file?
 
 # SUPPORT
-_submitLocal("support","normal",$LASTDEPENDENCY);
+_submitLocalJob("support","normal",$LASTDEPENDENCY);
 # check bml file?
-exit(1);
 
 #EXTRACT (single)
-_submitLocal("extract","normal","done($LASTID)");
+_submitLocalJob("extract","normal","done($LASTID)");
 
 #ASSEMBLY (multi)
 _submitDistJob("assembly","normal","done($LASTID)");
 
+my $children = _get_child_jobs($LASTID);
+$LASTDEPENDENCY = _make_depends_children(@{$children});
+
 #OUTPUT (single)
-_submitLocal("support","normal",$LASTDEPENDENCY);
+_submitLocalJob("support","normal",$LASTDEPENDENCY);
 
 #clean up (template file, log files, etc)
 #check exists out.fasta...

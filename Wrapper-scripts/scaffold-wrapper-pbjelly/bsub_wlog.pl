@@ -5,10 +5,10 @@ my $logfile = shift;
 my $parentID = $ENV{"LSB_JOBID"};
 my $parentName = $ENV{"LSB_JOBNAME"};
 #my $logName = "bsub_log";
-$logfile =~ s/.txt$//gi;
-$logfile .= ".".$parentName if ($parentName ne "");
-$logfile .= ".".$parentID.".txt";
-open(LOG,">>$logfile");
+#$logfile =~ s/.txt$//gi;
+#$logfile .= ".".$parentName if ($parentName ne "");
+#$logfile .= ".".$parentID.".txt";
+open(LOG,">>$logfile") or die "Could not open file '$logfile' $!";;
 
 my $command = "bsub -e ".$parentName."_".$parentID.".%J.err ".
     "-o ".$parentName."_".$parentID.".%J.out ".
@@ -25,5 +25,6 @@ if($output =~ m/\<(\d+)\>.*submitted*/gi) {
 }
 else {
   print LOG $output;
+  close(LOG);
   exit(1001);
 }
