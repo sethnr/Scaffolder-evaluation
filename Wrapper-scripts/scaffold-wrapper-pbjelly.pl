@@ -26,6 +26,8 @@ my $dist_mem_node = 48000;
 my $DIST_CORES = 12;
 my $preexec = "~/Pacbio_tests/setPaths.sh";
 
+my $jelly = "Jelly.py"
+
 #BLASR_OPTIONS
 my %blasr = (
 "minMatch", 8,
@@ -39,7 +41,8 @@ my %blasr = (
 
 my $options_ok = GetOptions(\%blasr,
 'name=s'    => \$dataset_name,
-'noclean'   => \$no_clean,
+'noclean'   => \$no_clean,                            
+'jelly=s'   => \$jelly,
 'blasr=s'   => \$blasr_opts,
 'jobs=i'    => \$NJOBS,
 'cores=i'   => \$no_cores,
@@ -193,7 +196,7 @@ sub _submitLocalJob {
  bsub -J $job_name -o $job_name.%J.out -e $job_name.%J.err \\
  -q $queue -R \'select[mem>$dist_mem_head] rusage[mem=$dist_mem_head] span[ptile=4]\' \\
  $dependency $preexec  -M$dist_mem_head -n4  \\
- Jelly.py $stage $tempfile_sm
+ $jelly $stage $tempfile_sm
 END
 $command .= " -x $extras" if $extras;
 
@@ -224,7 +227,7 @@ sub _submitDistJob {
  bsub -J $job_name -o $job_name.%J.out -e $job_name.%J.err \\
  -q $queue -R \'select[mem>2000] rusage[mem=2000] span[ptile=4]\' \\
  $dependency $preexec  -M2000 -n4  \\
- Jelly.py $stage $tempfile_lg
+ $jelly $stage $tempfile_lg
 END
 
 $command .= " -x $extras" if $extras;
