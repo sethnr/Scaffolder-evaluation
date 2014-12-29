@@ -51,8 +51,8 @@ my $options_ok = GetOptions(\%blasr,
 'localmem=i' => \$local_mem,
 'reads|r=s'   => \@reads,
 'contigs|c=s' => \$contigs,
-'o=s'       => \$outdir
-
+'o=s'       => \$outdir,
+'preexec|e=s' => \$preexec
 );
 
 #print join("\n",%blasr);
