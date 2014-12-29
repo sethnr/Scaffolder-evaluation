@@ -134,7 +134,10 @@ my $bsub_script = "$FindBin::Bin/scaffold-wrapper-pbjelly/bsub_wlog.pl";
 print "BSUB_SCRIPT: ".$bsub_script."\n";
 # my $bsub_script =  File::Spec->rel2abs('./scaffold-wrapper_pbjelly/bsub_wlog.pl');
 
-my $LSF_SUBLINE = $bsub_script.' '.$LOGFILE.' -q normal -R \"select[mem\>'.$DIST_MEM_NODE.'] rusage[mem='.$DIST_MEM_NODE.'] span[ptile='.$DIST_CORES.']\" -n'.$DIST_CORES.'  -M'.$DIST_MEM_NODE.' ${CMD}';
+my $preexec_com = "";
+$preexec_com = "-E ".$preexec if ($preexec ne "");
+
+my $LSF_SUBLINE = $bsub_script.' '.$LOGFILE.' -q normal -R \"select[mem\>'.$DIST_MEM_NODE.'] rusage[mem='.$DIST_MEM_NODE.'] span[ptile='.$DIST_CORES.']\" -n'.$DIST_CORES.'  -M'.$DIST_MEM_NODE.' '.$preexec_com.' ${CMD}';
 my $LOCAL_SUBLINE='${CMD} 2> ${STDERR} 1> ${STDOUT} &amp;';
 
 my $BLASR_LINE = "";
@@ -203,8 +206,8 @@ sub _submitLocalJob {
     #print $job_name."\n";
     my $command = <<"END";
  bsub -J $job_name -o $job_name.%J.out -e $job_name.%J.err \\
- -q $queue -R \'select[mem>$dist_mem_head] rusage[mem=$dist_mem_head] span[ptile=4]\' \\
- $dependency $preexec  -M$dist_mem_head -n4  \\
+ -q $queue -R \'select[mem>$LOCAL_MEM] rusage[mem=$LOCAL_MEM] span[ptile=4]\' \\
+ $dependency $preexec_com  -M$LOCAL_MEM -n4  \\
  $jelly $stage $tempfile_sm
 END
     $command .= " -x $extras" if $extras;
@@ -229,8 +232,8 @@ sub _submitDistJob {
     #print $job_name."\n";
     my $command = <<"END";
  bsub -J $job_name -o $job_name.%J.out -e $job_name.%J.err \\
- -q $queue -R \'select[mem>2000] rusage[mem=2000] span[ptile=4]\' \\
- $dependency $preexec  -M2000 -n4  \\
+ -q $queue -R \'select[mem>$DIST_MEM_HEAD] rusage[mem=$DIST_MEM_HEAD] span[ptile=4]\' \\
+ $dependency $preexec_com  -M$DIST_MEM_HEAD -n4  \\
  $jelly $stage $tempfile_lg
 
 END
