@@ -26,7 +26,7 @@ my $dist_mem_node = 48000;
 my $DIST_CORES = 12;
 my $preexec = "~/Pacbio_tests/setPaths.sh";
 
-my $jelly = "Jelly.py"
+my $jelly = "Jelly.py";
 
 #BLASR_OPTIONS
 my %blasr = (
