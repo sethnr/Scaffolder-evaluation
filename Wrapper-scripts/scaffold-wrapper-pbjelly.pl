@@ -4,8 +4,8 @@ use strict;
 use warnings;
 use Getopt::Long;
 use File::Spec;
-use File::Spec::Link;
-use File::Which;
+# use File::Spec::Link;
+#use File::Which;
 use File::Basename;
 use FindBin;
 
@@ -24,54 +24,90 @@ my $LOCAL_MEM = 8000;
 my $DIST_MEM_HEAD = 2000;
 my $DIST_MEM_NODE = 48000;
 my $DIST_CORES = 12;
-#my $preexec = "~/Pacbio_tests/PBSuite_14.9.9/setup.sh";
-
 $preexec = "";
 
 my $jelly = "Jelly.py";
 
-#BLASR_OPTIONS
-my %blasr = (
-"minMatch", 8,
-"sdpTupleSize", 8,
-"minPctIdentity", 75,
-"bestn", 1,
-"nCandidates", 10,
-"maxScore", -500, 
-"nproc", 12,
-"noSplitSubreads",""
-);
+my $minMatch=8;
+my $sdpTupleSize=8;
+my $minPctIdentity= 75;
+my $bestn=1;
+my $nCandidates=10;
+my $maxScore=-500; 
+#my $nproc=12; #same as DIST_CORES
+my $noSplitSubReads="";
+my $BLASR_OPTS="";
+my $help=-1;
 
-my $options_ok = GetOptions(\%blasr,
-'name=s'    => \$dataset_name,
-'noclean'   => \$no_clean,                            
-'jelly=s'   => \$jelly,
-'blasr=s'   => \$blasr_opts,
-'jobs=i'    => \$NJOBS,
-'cores=i'   => \$no_cores,
-'debug'     => \$debug,
-'distmem=i' => \$DIST_MEM_NODE,
-'localmem=i' => \$LOCAL_MEM,
-'reads|r=s'   => \@reads,
-'contigs|c=s' => \$contigs,
-'o=s'       => \$outdir,
-'preexec|E=s' => \$preexec
-);
 
-#print join("\n",%blasr);
-
-if (!($options_ok)) {
-print STDERR "usage: $0 [options] -c <contigs.fa> -o <output dir> -r <reads.fq> [-r <reads.fq>]
+my $usage =  <<END;
+usage: $0 [options] -c <contigs.fa> -o <output dir> -r <reads.fq> [-r <reads.fq>]
 
 Options:
--blasr_ops \"STRING\"
-Put blasr options in quotes. Unless this option is used, defaults will be used.
--noclean
-Don't clean up files. Default is to delete most files when finished
-";
+##GENERAL/PBJ OPTIONS
+ --reads | -r     reads file (fastq)
+ --contigs | -c   contigs file (fasta)
+ --o              output directory                         [./]
+ --name           dataset name (determined outfile, etc)   [first read file name]
+ --distmem        memory requirements for distributed      [48000 (48gb)]
+                  jobs (align / assembly) 
+ --localmem       memory requirements for local jobs       [8000 (8gb)]
+ --jelly          path/to/jelly.py                         [Jelly.py (in path)]
+ --jobs           max no of concurrent jobs to run         [10]
+ --cores          no of cores to use for dist jobs         [12]
+ --preexec | -E   pre-exec script, passed to LSF
+ --noclean        do not remove temp files                 [False]
+ --debug     
+ --help|h         print this help text
+
+##BLASR OPTIONS    [see blasr manual]
+ --minMatch        [$minMatch]
+ --sdpTupleSize    [$sdpTupleSize]
+ --minPctIdentity  [$minPctIdentity]
+ --bestn           [$bestn] 
+ --nCandidates     [$nCandidates]
+ --maxScore        [$maxScore]
+ --nproc           [$DIST_CORES]
+ --noSplitSubreads [False]
+ --blasr_opts       "--any additional --opts for --blasr"
+
+END
+
+
+
+my  $options_ok = GetOptions(
+ #BLASR OPTIONS:
+  'minMatch=i' => $minMatch,
+  'sdpTupleSize=i' => $sdpTupleSize,
+  'minPctIdentity=i' => $minPctIdentity,
+  'bestn=i' => $bestn,
+  'nCandidates=i' => $nCandidates,
+  'noSplitSubreads' => $noSplitSubReads,
+  'maxScore=i' =>  $maxScore,
+  'blasr_opts=s' => $BLASR_OPTS,
+ #GENERAL/PBJ OPTIONS                 
+  'name=s'    => \$dataset_name,
+  'noclean'   => \$no_clean,                            
+  'jelly=s'   => \$jelly,
+#  'blasr=s'   => \$blasr_opts,
+  'jobs=i'    => \$NJOBS,
+  'cores=i'   => \$DIST_CORES,
+  'debug'     => \$debug,
+  'distmem=i' => \$DIST_MEM_NODE,
+  'localmem=i' => \$LOCAL_MEM,
+  'reads|r=s'   => \@reads,
+  'contigs|c=s' => \$contigs,
+  'o=s'       => \$outdir,
+  'preexec|E=s' => \$preexec,
+  'help|h'    => \$help
+                            );
+print $options_ok;
+#print join("\n",%blasr);
+
+if ($help || !($options_ok) || (!$#reads) || !($contigs) || !($outdir)) {
+print STDERR $usage;
 exit(1);
 }
-
 
 $contigs = File::Spec->rel2abs($contigs);
 $reads[0] = File::Spec->rel2abs($reads[0]);
@@ -126,10 +162,6 @@ system("mkdir $outdir/$dataset_name"); # or die "could not make rundir";
 #######################
 #TEMPLATES
 #######################
-#$contigs = "/lustre/scratch108/parasites/snr/refs/Pf3D7.version3.uniquely-tagged.contigs.fasta";
-#$outdir = "/lustre/scratch108/parasites/snr/Pacbio_tests/out";
-#$dataset_name = "dataset_name";
-
 my $bsub_script = "$FindBin::Bin/scaffold-wrapper-pbjelly/bsub_wlog.pl";
 print "BSUB_SCRIPT: ".$bsub_script."\n";
 # my $bsub_script =  File::Spec->rel2abs('./scaffold-wrapper_pbjelly/bsub_wlog.pl');
@@ -140,10 +172,10 @@ $preexec_com = "-E ".$preexec if ($preexec ne "");
 my $LSF_SUBLINE = $bsub_script.' '.$LOGFILE.' -q normal -R \"select[mem\>'.$DIST_MEM_NODE.'] rusage[mem='.$DIST_MEM_NODE.'] span[ptile='.$DIST_CORES.']\" -n'.$DIST_CORES.'  -M'.$DIST_MEM_NODE.' '.$preexec_com.' ${CMD}';
 my $LOCAL_SUBLINE='${CMD} 2> ${STDERR} 1> ${STDOUT} &amp;';
 
-my $BLASR_LINE = "";
-foreach my $key (keys(%blasr)) {
-    $BLASR_LINE .= " -$key $blasr{$key}"
-}
+my $BLASR_LINE = " -minMatch $minMatch  -sdpTupleSize $sdpTupleSize  -minPctIdentit $minPctIdentity  -bestn=i $bestn  -nCandidates $nCandidates  -maxScore  $maxScore  -nproc $DIST_CORES ";
+$BLASR_LINE .= " -noSplitSubreads" if ($noSplitSubReads);
+$BLASR_LINE .= $BLASR_OPTS;
+
 
 my $template = <<'END';
 <jellyProtocol>
@@ -188,8 +220,13 @@ $COMMAND_LINE = "";
 
 my $LASTID = -1;
 my $LASTDEPENDENCY;
-#def submit single-job job
 
+
+#####
+# Job submission wrappers:
+#####
+
+#def submit single-job job
 sub _submitLocalJob {
     my $stage = shift;
     my $queue = shift;
@@ -245,24 +282,18 @@ END
     my $result = _wait_done();
 }
 
+#bsub job and wait till job finishes (collect child jobs after) 
 sub _wait_done {
-#    my $bsub = `bjobs -noheader $LASTID`;
     my $bsub = "";
     my $status = "";
-#    if($bsub) {
-#	my @F = split($bsub);
-#	$status = $F[2];
-#    }
+    #count how many wait cycles...
     my $waits = 0;
     print STDERR "  job ".$LASTID." waiting";
-#    while ($status ne "EXIT" && $status ne "DONE") {
     do {
-	#print STDERR "waiting... ".$LASTID." ".$status." ".$waits."\n";
 	print STDERR ".";
 	$waits++;
 	sleep(30);
 	$bsub = `bjobs -noheader $LASTID`;
-#	print "BSUB: ".$bsub;
 	if($bsub) {
 	    my @F = split(/\s+/,$bsub);
 	    $status = $F[2];
@@ -277,7 +308,6 @@ sub _wait_done {
 	# will fail if finds one with EXIT status
 	_get_all_jobs(); 
 	
-#   }	
     } while ($status ne "EXIT" && $status ne "DONE");
     print STDERR "\n";
     return $status;
@@ -296,6 +326,20 @@ sub _bsub {
 	print LOGFILE "-1\t-1\tcould not submit command\n".$command;
 	$LASTID = "-1";}
 }
+
+#make dependency line to wait for end of all current jobs
+sub _make_depends_children {
+    my @depends = ();
+    foreach my $child (@_) {
+	my $depend = "done(".$child.")";
+	push(@depends,$depend);
+    }
+    return join(" && ",@depends);
+}
+
+######
+# get LSF info
+######
 
 sub _get_child_jobs {
     my $parent_id = shift;
@@ -336,8 +380,6 @@ sub _get_all_jobs {
     return \@jobs;
 }
 
-
-
 sub _get_job_status {
     my $job_id = shift;
     my $bjob = `bjobs -noheader $job_id`;
@@ -350,14 +392,10 @@ sub _get_job_status {
     return $status;
 }
 
-sub _make_depends_children {
-    my @depends = ();
-    foreach my $child (@_) {
-	my $depend = "done(".$child.")";
-	push(@depends,$depend);
-    }
-    return join(" && ",@depends);
-}
+
+########
+# the stuff that does stuff
+########
 
 my $children;
 
